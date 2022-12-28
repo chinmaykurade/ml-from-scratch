@@ -1,1 +1,1 @@
-# ml-from-scratch
+# ml-project-template

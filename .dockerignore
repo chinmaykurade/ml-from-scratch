@@ -1,0 +1,9 @@
+jupyter_notebooks*
+*/env*
+*/venv*
+.circleci*
+#packages/package_name
+*.env
+*.log
+.git
+.gitignore

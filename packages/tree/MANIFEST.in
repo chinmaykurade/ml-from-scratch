@@ -1,0 +1,15 @@
+include *.txt
+include *.md
+include *.cfg
+include *.pkl
+recursive-include ./tree/*
+
+include tree/trained_models/*.pkl
+include tree/external_models/*
+include tree/VERSION
+
+include ./requirements.txt
+exclude *.log
+
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
