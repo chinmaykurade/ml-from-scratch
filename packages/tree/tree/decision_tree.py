@@ -118,6 +118,37 @@ def optimal_feature_split(X_feature, y, criterion='gini', extreme_random=False):
     return np.mean(optimal_split_values), min_weighted_criterion_value
 
 
+def add_node(dot_data, num_nodes, parent_node_num, label_text, fillcolor):
+    current_node_num = num_nodes
+    dot_data = dot_data.split('}')[0]
+    dot_data += f'{current_node_num} [label=<{label_text}>, fillcolor="{fillcolor}"] ;'
+    dot_data += '\n'
+    if parent_node_num >= 0:
+        dot_data += f'{parent_node_num} -> {current_node_num}'
+        dot_data += '\n'
+    dot_data += '}'
+    return dot_data
+
+
+def combine_hex_values(d):
+    d_items = sorted(d.items())
+    tot_weight = sum(d.values())
+    red = int(sum([int(k[:2], 16)*v for k, v in d_items])/tot_weight)
+    green = int(sum([int(k[2:4], 16)*v for k, v in d_items])/tot_weight)
+    blue = int(sum([int(k[4:6], 16)*v for k, v in d_items])/tot_weight)
+    zpad = lambda x: x if len(x)==2 else '0' + x
+    return zpad(hex(red)[2:]) + zpad(hex(green)[2:]) + zpad(hex(blue)[2:])
+
+
+def calculate_node_fillcolor(value, class_colors):
+    total = sum(value)
+    proportions = [v/total for v in value]
+    pp = {cc: pr for cc,pr in zip(class_colors, proportions)}
+    print(pp)
+    fillcolor = combine_hex_values(pp)
+    return "#"+fillcolor
+
+
 class Node:
     """
     A class to represent a node(leaf) of a decision tree.
@@ -145,6 +176,9 @@ class Node:
         if self.criterion_value == 0 or self.height >= max_tree_height:
             self.is_terminal = True
             # print(self.gini_impurity, self.height, self.max_tree_height)
+            self.feature_split = None
+            self.split_value = None
+            self.split_criterion_value = 0
         else:
             self.is_terminal = False
             self.feature_split = random.choice([*range(self.num_features)])
@@ -211,6 +245,51 @@ class Node:
             else:
                 return self.final_class
 
+    
+    def export_graphviz_node(self, dot_data, num_nodes, parent_node_num, num_classes, feature_names=None, class_names=None, class_colors=None):
+        current_node_num = num_nodes
+        num_nodes += 1
+        label_text = f"{current_node_num}"
+        # self.feature_split = best_feature
+        # self.split_value = best_feature_split_value
+        # self.split_criterion_value = min_criterion_value
+
+        if class_names is not None:
+            final_class = class_names[self.final_class]
+        else:
+            final_class = self.final_class
+
+        counts = Counter(self.y)
+        # value = "["
+        # for nc in range(num_classes-1):
+        #     value += str(counts.get(nc, 0)) + ', '
+        # value += str(counts.get(num_classes-1, 0)) + ']'
+
+        value = [counts.get(nc, 0) for nc in range(num_classes)]
+
+        if self.feature_split is not None:
+            if feature_names is not None:
+                feature_split = feature_names[self.feature_split]
+            else:
+                feature_split = str(self.feature_split)
+            label_text = f"{feature_split} &lt; {self.split_value:.2f}<br/>{self.criterion} = {self.split_criterion_value:.2f}<br/>samples = {self.num_samples}<br/>value = {value}<br/>class = {final_class}"
+        else:
+            label_text = f"{self.criterion} = {self.split_criterion_value}<br/>samples = {self.num_samples}<br/>value = {value}<br/>class = {final_class}"
+        
+        fillcolor = '#fffdfc'
+        if class_colors is not None:
+            fillcolor = calculate_node_fillcolor(value, class_colors)
+        dot_data = add_node(dot_data, current_node_num, parent_node_num, label_text, fillcolor)
+        if self.is_terminal:
+            return dot_data, num_nodes
+        
+        if self.left_child is not None:
+            dot_data, num_nodes = self.left_child.export_graphviz_node(dot_data, num_nodes, current_node_num, num_classes, feature_names=feature_names, class_names=class_names, class_colors=class_colors)
+        if self.right_child is not None:
+            dot_data, num_nodes = self.right_child.export_graphviz_node(dot_data, num_nodes, current_node_num, num_classes, feature_names=feature_names, class_names=class_names, class_colors=class_colors)
+
+        return dot_data, num_nodes
+
 
 class DecisionTreeClassifier:
     """
@@ -233,6 +312,8 @@ class DecisionTreeClassifier:
         assert n_samples == y.shape[0]
         assert len(y.shape) == 1 or y.shape[1] == 1
 
+        self.num_classes = len(Counter(y))
+
         self.root_node = Node(X, y, 1, self.max_depth, self.criterion, self.extreme_random)
         self.root_node.fit()
 
@@ -242,3 +323,16 @@ class DecisionTreeClassifier:
     def predict(self, X):
         y_pred = np.array([self.root_node.predict_sample(X_sample) for X_sample in X])
         return y_pred
+
+
+    def export_graphviz(self, feature_names, class_names):
+        dot_data = """
+digraph Tree {
+node [shape=box, style="filled, rounded", color="black", fontname="helvetica"] ;
+edge [fontname="helvetica"] ;
+}
+"""
+        
+        class_colors = ["e58139", "39e581", "8139e5"]
+        dot_data, _ = self.root_node.export_graphviz_node(dot_data, 0, -1, self.num_classes, feature_names=feature_names, class_names=class_names, class_colors=class_colors)
+        return dot_data
