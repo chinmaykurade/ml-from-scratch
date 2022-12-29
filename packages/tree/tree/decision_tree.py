@@ -37,7 +37,7 @@ def random_array(start, end, num_elements):
     return arr
 
 
-def feature_split_interval(X_feature, interval_granularity=0.2, default_max_len_intervals=5, extreme_random=False):
+def feature_split_interval(X_feature, interval_granularity=0.5, default_max_len_intervals=5, extreme_random=False):
     """
     Get the intervals for a particular feature to find the gini impurity values for the split.
     """
@@ -140,11 +140,34 @@ def combine_hex_values(d):
     return zpad(hex(red)[2:]) + zpad(hex(green)[2:]) + zpad(hex(blue)[2:])
 
 
+def colorhex(red, green, blue):
+    return f"{int(red):02x}{int(green):02x}{int(blue):02x}"
+
+
+def random_color(rgb_pick=0):
+    # rgb_pick = random.randint(0,2)
+    red = random.randint(0,96)
+    green = random.randint(0,96)
+    blue = random.randint(0,96)
+    if rgb_pick == 0:
+        red = random.randint(192,255)
+    elif rgb_pick == 1:
+        green = random.randint(192,255)
+    else:
+        blue = random.randint(192,255)
+    return colorhex(red, green, blue)
+
+
 def calculate_node_fillcolor(value, class_colors):
     total = sum(value)
     proportions = [v/total for v in value]
     pp = {cc: pr for cc,pr in zip(class_colors, proportions)}
-    print(pp)
+    max_pr = max(proportions)
+    proportions.remove(max_pr)
+    second_max_pr = max(proportions)
+    white_weight = 0.3/max(0.01,max_pr-second_max_pr)
+    pp['ffffff'] = white_weight
+    # print(pp)
     fillcolor = combine_hex_values(pp)
     return "#"+fillcolor
 
@@ -174,26 +197,28 @@ class Node:
         # print(self.gini_impurity)
 
         if self.criterion_value == 0 or self.height >= max_tree_height:
-            self.is_terminal = True
+            self.is_leaf = True
             # print(self.gini_impurity, self.height, self.max_tree_height)
             self.feature_split = None
             self.split_value = None
             self.split_criterion_value = 0
         else:
-            self.is_terminal = False
+            self.is_leaf = False
             self.feature_split = random.choice([*range(self.num_features)])
             # print(X[:,self.feature_split])
             split_intervals = feature_split_interval(X[:,self.feature_split])
             # print(split_intervals)
             self.split_value = np.random.choice(split_intervals)
         
-        # print(X.shape, y.shape, self.criterion_value, self.is_terminal)
+        # print(X.shape, y.shape, self.criterion_value, self.is_leaf)
 
 
-    def fit(self):
+    def fit(self, features_to_skip=[]):
         # print(self.X.shape)
         min_criterion_value = 1
         for i in range(self.num_features):
+            if i in features_to_skip:
+                continue
             split_value, split_criterion_value = optimal_feature_split(self.X[:,i], self.y, criterion=self.criterion, extreme_random=self.extreme_random)
             if split_criterion_value < min_criterion_value:
                 min_criterion_value = split_criterion_value
@@ -221,17 +246,17 @@ class Node:
         self.left_child = Node(X_lt, y_lt, self.height+1, self.max_tree_height, self.criterion, self.extreme_random)
         self.right_child = Node(X_ge, y_ge, self.height+1, self.max_tree_height, self.criterion, self.extreme_random)
 
-        if not self.left_child.is_terminal:
-            self.left_child.fit()
+        if not self.left_child.is_leaf:
+            self.left_child.fit(features_to_skip=features_to_skip)
 
-        if not self.right_child.is_terminal:
-            self.right_child.fit()
+        if not self.right_child.is_leaf:
+            self.right_child.fit(features_to_skip=features_to_skip)
 
         return self
 
 
     def predict_sample(self, X_sample):
-        if self.is_terminal:
+        if self.is_leaf:
             return self.final_class
         if X_sample[self.feature_split] >= self.split_value:
             # Pass on to the right child
@@ -272,7 +297,7 @@ class Node:
                 feature_split = feature_names[self.feature_split]
             else:
                 feature_split = str(self.feature_split)
-            label_text = f"{feature_split} &lt; {self.split_value:.2f}<br/>{self.criterion} = {self.split_criterion_value:.2f}<br/>samples = {self.num_samples}<br/>value = {value}<br/>class = {final_class}"
+            label_text = f"{feature_split} &lt; {self.split_value:.2f}<br/>{self.criterion} = {self.criterion_value:.2f}<br/>samples = {self.num_samples}<br/>value = {value}<br/>class = {final_class}"
         else:
             label_text = f"{self.criterion} = {self.split_criterion_value}<br/>samples = {self.num_samples}<br/>value = {value}<br/>class = {final_class}"
         
@@ -280,7 +305,7 @@ class Node:
         if class_colors is not None:
             fillcolor = calculate_node_fillcolor(value, class_colors)
         dot_data = add_node(dot_data, current_node_num, parent_node_num, label_text, fillcolor)
-        if self.is_terminal:
+        if self.is_leaf:
             return dot_data, num_nodes
         
         if self.left_child is not None:
@@ -299,12 +324,19 @@ class DecisionTreeClassifier:
         max_depth (int): The maximum depth of the decision tree
         criterion (str): The criterion for splitting - 'gini' or 'information gain'
         extreme_random (bool): Whether to use randomly generated thresholds for splitting (default=False)
+        features_to_skip (list): The list of feature numbers to not consider for building the decision tree
     """
 
-    def __init__(self, max_depth: int=20, criterion: str='gini', extreme_random: bool=False):
+    def __init__(self, 
+        max_depth: int=20, 
+        criterion: str='gini', 
+        extreme_random: bool=False,
+        features_to_skip: list=[]
+        ):
         self.max_depth = max_depth
         self.criterion = criterion
         self.extreme_random = extreme_random
+        self.features_to_skip = features_to_skip
 
 
     def fit(self, X: np.array, y: np.array):
@@ -315,7 +347,7 @@ class DecisionTreeClassifier:
         self.num_classes = len(Counter(y))
 
         self.root_node = Node(X, y, 1, self.max_depth, self.criterion, self.extreme_random)
-        self.root_node.fit()
+        self.root_node.fit(features_to_skip=self.features_to_skip)
 
         return self
 
@@ -334,5 +366,8 @@ edge [fontname="helvetica"] ;
 """
         
         class_colors = ["e58139", "39e581", "8139e5"]
+        class_colors = [random_color(i%3) for i in range(self.num_classes)]
         dot_data, _ = self.root_node.export_graphviz_node(dot_data, 0, -1, self.num_classes, feature_names=feature_names, class_names=class_names, class_colors=class_colors)
         return dot_data
+
+
