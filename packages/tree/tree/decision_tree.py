@@ -2,6 +2,16 @@ import numpy as np
 from collections import Counter
 import random
 
+DOT_DATA = """
+digraph Tree {
+node [shape=box, style="filled, rounded", color="black", fontname="helvetica"] ;
+edge [fontname="helvetica"] ;
+}
+"""
+CLASSIFICATION_CRITERIONS = ['gini', 'entropy']
+REGRESSION_CRITERIONS = ['variance']
+
+
 def calculate_gini_impurity(y):
     gini = 0
     total = len(y)
@@ -31,6 +41,16 @@ def calculate_entropy(y):
     return entropy
 
 
+def calculate_variance(y):
+    variance = 0
+    total = len(y)
+    mean = np.mean(y)
+    
+    variance = y.var()
+    
+    return variance
+
+
 def random_array(start, end, num_elements):
     arr = np.random.random((num_elements,))
     arr = start + arr * (end-start)
@@ -42,6 +62,8 @@ def feature_split_interval(X_feature, interval_granularity=0.5, default_max_len_
     Get the intervals for a particular feature to find the gini impurity values for the split.
     """
     X_feature = X_feature.reshape(-1,)
+
+    # print(X_feature.shape)
 
     feature_max, feature_min = max(X_feature), min(X_feature)
 
@@ -88,10 +110,15 @@ def optimal_feature_split(X_feature, y, criterion='gini', extreme_random=False):
 
     if criterion == 'gini':
         parent_node_criterion_value = calculate_gini_impurity(y)
-    else:
+    elif criterion == 'entropy':
         parent_node_criterion_value = calculate_entropy(y)
+    elif criterion == 'variance':
+        parent_node_criterion_value = calculate_variance(y)
 
-    min_weighted_criterion_value = 1
+    if criterion in CLASSIFICATION_CRITERIONS:
+        min_weighted_criterion_value = 1
+    else:
+        min_weighted_criterion_value = float('inf')
 
     # print(split_intervals, X_feature)
     optimal_split_values = [split_intervals[0]]
@@ -104,9 +131,12 @@ def optimal_feature_split(X_feature, y, criterion='gini', extreme_random=False):
         if criterion == 'gini':
             weighted_criterion_value = (calculate_gini_impurity(lt_split) * len(lt_split) \
                 + calculate_gini_impurity(ge_split) * len(ge_split))/ len(y)
-        else:
+        elif criterion == 'entropy':
             weighted_criterion_value = (calculate_entropy(lt_split) * len(lt_split) \
                 + calculate_entropy(ge_split) * len(ge_split))/ len(y)
+        elif criterion == 'variance':
+            weighted_criterion_value = (calculate_variance(lt_split) * len(lt_split) \
+                + calculate_variance(ge_split) * len(ge_split))/ len(y)
         
         if weighted_criterion_value <= min_weighted_criterion_value:
             if weighted_criterion_value == min_weighted_criterion_value:
@@ -186,11 +216,17 @@ class Node:
         self.extreme_random = extreme_random
         if criterion == 'gini':
             self.criterion_value = calculate_gini_impurity(y)
-        else: 
+        elif criterion == 'entropy': 
             self.criterion_value = calculate_entropy(y)
+        elif criterion == 'variance': 
+            self.criterion_value = calculate_variance(y)
         
         self.num_samples, self.num_features = X.shape
-        self.final_class = Counter(y).most_common()[0][0]
+
+        if criterion in CLASSIFICATION_CRITERIONS:
+            self.node_value = Counter(y).most_common()[0][0]
+        else:
+            self.node_value = np.mean(y)
         self.left_child = None
         self.right_child = None
 
@@ -215,7 +251,10 @@ class Node:
 
     def fit(self, features_to_skip=[]):
         # print(self.X.shape)
-        min_criterion_value = 1
+        if self.criterion in CLASSIFICATION_CRITERIONS:
+            min_criterion_value = 1
+        else:
+            min_criterion_value = float('inf')
         for i in range(self.num_features):
             if i in features_to_skip:
                 continue
@@ -233,11 +272,15 @@ class Node:
         y_lt = self.y[X_feature < best_feature_split_value]
         y_ge = self.y[X_feature >= best_feature_split_value]
 
+        # print(X_lt.shape, X_ge.shape)
+
         self.feature_split = best_feature
         self.split_value = best_feature_split_value
         self.split_criterion_value = min_criterion_value
 
-        # print(best_feature, best_feature_split_value, min_gini_impurity, self.height)
+        # print(best_feature, best_feature_split_value, min_criterion_value, self.height)
+
+        # print(self.criterion_value, min_criterion_value, self.criterion_value <= min_criterion_value)
 
         if self.criterion_value <= min_criterion_value:
             # This means the split did not improve the criteron - gini impurity, we need to stop
@@ -257,21 +300,30 @@ class Node:
 
     def predict_sample(self, X_sample):
         if self.is_leaf:
-            return self.final_class
+            return self.node_value
         if X_sample[self.feature_split] >= self.split_value:
             # Pass on to the right child
             if self.right_child is not None:
                 return self.right_child.predict_sample(X_sample)
             else:
-                return self.final_class
+                return self.node_value
         else:
             if self.left_child is not None:
                 return self.left_child.predict_sample(X_sample)
             else:
-                return self.final_class
+                return self.node_value
 
     
-    def export_graphviz_node(self, dot_data, num_nodes, parent_node_num, num_classes, feature_names=None, class_names=None, class_colors=None):
+    def export_graphviz_node(self, 
+            dot_data, 
+            num_nodes, 
+            parent_node_num, 
+            num_classes, 
+            feature_names=None, 
+            class_names=None, 
+            class_colors=None,
+            regression=False,
+            ):
         current_node_num = num_nodes
         num_nodes += 1
         label_text = f"{current_node_num}"
@@ -280,9 +332,9 @@ class Node:
         # self.split_criterion_value = min_criterion_value
 
         if class_names is not None:
-            final_class = class_names[self.final_class]
+            node_value = class_names[self.node_value]
         else:
-            final_class = self.final_class
+            node_value = self.node_value
 
         counts = Counter(self.y)
         # value = "["
@@ -292,14 +344,19 @@ class Node:
 
         value = [counts.get(nc, 0) for nc in range(num_classes)]
 
+        if not regression:
+            value_text = f"value = {value}<br/>class"
+        else:
+            value_text = f"value"
+
         if self.feature_split is not None:
             if feature_names is not None:
                 feature_split = feature_names[self.feature_split]
             else:
                 feature_split = str(self.feature_split)
-            label_text = f"{feature_split} &lt; {self.split_value:.2f}<br/>{self.criterion} = {self.criterion_value:.2f}<br/>samples = {self.num_samples}<br/>value = {value}<br/>class = {final_class}"
+            label_text = f"{feature_split} &lt; {self.split_value:.2f}<br/>{self.criterion} = {self.criterion_value:.2f}<br/>samples = {self.num_samples}<br/>{value_text} = {node_value}"
         else:
-            label_text = f"{self.criterion} = {self.split_criterion_value}<br/>samples = {self.num_samples}<br/>value = {value}<br/>class = {final_class}"
+            label_text = f"{self.criterion} = {self.split_criterion_value}<br/>samples = {self.num_samples}<br/>{value_text} = {node_value}"
         
         fillcolor = '#fffdfc'
         if class_colors is not None:
@@ -309,20 +366,24 @@ class Node:
             return dot_data, num_nodes
         
         if self.left_child is not None:
-            dot_data, num_nodes = self.left_child.export_graphviz_node(dot_data, num_nodes, current_node_num, num_classes, feature_names=feature_names, class_names=class_names, class_colors=class_colors)
+            dot_data, num_nodes = self.left_child.export_graphviz_node(dot_data, num_nodes, current_node_num, \
+                num_classes, feature_names=feature_names, class_names=class_names, class_colors=class_colors, \
+                regression=regression)
         if self.right_child is not None:
-            dot_data, num_nodes = self.right_child.export_graphviz_node(dot_data, num_nodes, current_node_num, num_classes, feature_names=feature_names, class_names=class_names, class_colors=class_colors)
+            dot_data, num_nodes = self.right_child.export_graphviz_node(dot_data, num_nodes, current_node_num, \
+                num_classes, feature_names=feature_names, class_names=class_names, class_colors=class_colors, \
+                regression=regression)
 
         return dot_data, num_nodes
 
 
-class DecisionTreeClassifier:
+class DecisionTree:
     """
-    A Decision Tree Classifier Machine Learning algorithm.
+    A Decision Tree Machine Learning algorithm.
 
     Parameters:
         max_depth (int): The maximum depth of the decision tree
-        criterion (str): The criterion for splitting - 'gini' or 'information gain'
+        criterion (str): The criterion for splitting - 'gini', 'entropy' or 'variance'
         extreme_random (bool): Whether to use randomly generated thresholds for splitting (default=False)
         features_to_skip (list): The list of feature numbers to not consider for building the decision tree
     """
@@ -357,17 +418,13 @@ class DecisionTreeClassifier:
         return y_pred
 
 
-    def export_graphviz(self, feature_names, class_names):
-        dot_data = """
-digraph Tree {
-node [shape=box, style="filled, rounded", color="black", fontname="helvetica"] ;
-edge [fontname="helvetica"] ;
-}
-"""
-        
-        class_colors = ["e58139", "39e581", "8139e5"]
-        class_colors = [random_color(i%3) for i in range(self.num_classes)]
-        dot_data, _ = self.root_node.export_graphviz_node(dot_data, 0, -1, self.num_classes, feature_names=feature_names, class_names=class_names, class_colors=class_colors)
+    def export_graphviz(self, feature_names, class_names=None, regression=False):       
+        class_colors = None
+        if not regression:
+            class_colors = [random_color(i%3) for i in range(self.num_classes)]
+        dot_data, _ = self.root_node.export_graphviz_node(DOT_DATA, 0, -1, self.num_classes, \
+            feature_names=feature_names, class_names=class_names, class_colors=class_colors,\
+            regression=regression)
         return dot_data
 
 
