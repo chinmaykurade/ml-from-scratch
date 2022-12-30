@@ -1,6 +1,7 @@
 import numpy as np
 from collections import Counter
 import random
+import time
 
 DOT_DATA = """
 digraph Tree {
@@ -42,11 +43,7 @@ def calculate_entropy(y):
 
 
 def calculate_variance(y):
-    variance = 0
-    total = len(y)
-    mean = np.mean(y)
-    
-    variance = y.var()
+    variance = np.var(y)
     
     return variance
 
@@ -106,14 +103,16 @@ def feature_split_interval(X_feature, interval_granularity=0.5, default_max_len_
 
 
 def optimal_feature_split(X_feature, y, criterion='gini', extreme_random=False):
+    tic = time.time()
     split_intervals = feature_split_interval(X_feature, extreme_random=extreme_random)
+    time_taken = time.time() - tic
 
-    if criterion == 'gini':
-        parent_node_criterion_value = calculate_gini_impurity(y)
-    elif criterion == 'entropy':
-        parent_node_criterion_value = calculate_entropy(y)
-    elif criterion == 'variance':
-        parent_node_criterion_value = calculate_variance(y)
+    # if criterion == 'gini':
+    #     parent_node_criterion_value = calculate_gini_impurity(y)
+    # elif criterion == 'entropy':
+    #     parent_node_criterion_value = calculate_entropy(y)
+    # elif criterion == 'variance':
+    #     parent_node_criterion_value = calculate_variance(y)
 
     if criterion in CLASSIFICATION_CRITERIONS:
         min_weighted_criterion_value = 1
@@ -123,20 +122,43 @@ def optimal_feature_split(X_feature, y, criterion='gini', extreme_random=False):
     # print(split_intervals, X_feature)
     optimal_split_values = [split_intervals[0]]
 
+    time_taken = 0   
+
+    num_samples = len(y) 
+
     for split_value in split_intervals:
         # print(split_value)
+        # tic = time.time()
         ge_split = y[X_feature >= split_value]
         lt_split = y[X_feature < split_value]
 
+        w1 = len(lt_split)/num_samples
+        w2 = len(ge_split)/num_samples
+
+        # w1 = 0.35
+        # w2 = 0.65
+        
         if criterion == 'gini':
+            tic = time.time()
             weighted_criterion_value = (calculate_gini_impurity(lt_split) * len(lt_split) \
-                + calculate_gini_impurity(ge_split) * len(ge_split))/ len(y)
+                + calculate_gini_impurity(ge_split) * len(ge_split))/ num_samples
+            toc = time.time()
         elif criterion == 'entropy':
+            tic = time.time()
             weighted_criterion_value = (calculate_entropy(lt_split) * len(lt_split) \
-                + calculate_entropy(ge_split) * len(ge_split))/ len(y)
+                + calculate_entropy(ge_split) * len(ge_split))/ num_samples
+            toc = time.time()
         elif criterion == 'variance':
-            weighted_criterion_value = (calculate_variance(lt_split) * len(lt_split) \
-                + calculate_variance(ge_split) * len(ge_split))/ len(y)
+            # weighted_criterion_value = (calculate_variance(lt_split) * len(lt_split) \
+            #     + calculate_variance(ge_split) * len(ge_split))/ len(y)
+            tic = time.time()
+            var_lt_split = calculate_variance(lt_split)
+            var_ge_split = calculate_variance(ge_split)
+            toc = time.time()
+            weighted_criterion_value = var_lt_split * w1 + var_ge_split * w2
+            # toc = time.time()
+
+        time_taken += toc-tic
         
         if weighted_criterion_value <= min_weighted_criterion_value:
             if weighted_criterion_value == min_weighted_criterion_value:
@@ -145,7 +167,7 @@ def optimal_feature_split(X_feature, y, criterion='gini', extreme_random=False):
                 optimal_split_values = [split_value]
                 min_weighted_criterion_value = weighted_criterion_value
     
-    return np.mean(optimal_split_values), min_weighted_criterion_value
+    return np.mean(optimal_split_values), min_weighted_criterion_value, time_taken
 
 
 def add_node(dot_data, num_nodes, parent_node_num, label_text, fillcolor):
@@ -207,13 +229,14 @@ class Node:
     A class to represent a node(leaf) of a decision tree.
     """
 
-    def __init__(self, X, y, height, max_tree_height, criterion, extreme_random):
+    def __init__(self, X, y, height, max_tree_height, criterion, extreme_random, min_samples_leaf):
         self.X = X
         self.y = y
         self.height = height
         self.max_tree_height = max_tree_height
         self.criterion = criterion
         self.extreme_random = extreme_random
+        self.min_samples_leaf = min_samples_leaf
         if criterion == 'gini':
             self.criterion_value = calculate_gini_impurity(y)
         elif criterion == 'entropy': 
@@ -232,7 +255,7 @@ class Node:
 
         # print(self.gini_impurity)
 
-        if self.criterion_value == 0 or self.height >= max_tree_height:
+        if self.criterion_value == 0 or self.height >= max_tree_height or self.num_samples < min_samples_leaf:
             self.is_leaf = True
             # print(self.gini_impurity, self.height, self.max_tree_height)
             self.feature_split = None
@@ -247,6 +270,7 @@ class Node:
             self.split_value = np.random.choice(split_intervals)
         
         # print(X.shape, y.shape, self.criterion_value, self.is_leaf)
+        self.time_taken_for_split = 0
 
 
     def fit(self, features_to_skip=[]):
@@ -255,10 +279,16 @@ class Node:
             min_criterion_value = 1
         else:
             min_criterion_value = float('inf')
+
+        total_time_taken = 0
         for i in range(self.num_features):
             if i in features_to_skip:
                 continue
-            split_value, split_criterion_value = optimal_feature_split(self.X[:,i], self.y, criterion=self.criterion, extreme_random=self.extreme_random)
+            # tic = time.time()
+            split_value, split_criterion_value, time_taken = optimal_feature_split(self.X[:,i], self.y, criterion=self.criterion, extreme_random=self.extreme_random)
+            # toc = time.time()
+            # time_taken = toc-tic
+            total_time_taken += time_taken
             if split_criterion_value < min_criterion_value:
                 min_criterion_value = split_criterion_value
                 best_feature = i
@@ -277,6 +307,7 @@ class Node:
         self.feature_split = best_feature
         self.split_value = best_feature_split_value
         self.split_criterion_value = min_criterion_value
+        self.time_taken_for_split = total_time_taken
 
         # print(best_feature, best_feature_split_value, min_criterion_value, self.height)
 
@@ -286,8 +317,8 @@ class Node:
             # This means the split did not improve the criteron - gini impurity, we need to stop
             return self
 
-        self.left_child = Node(X_lt, y_lt, self.height+1, self.max_tree_height, self.criterion, self.extreme_random)
-        self.right_child = Node(X_ge, y_ge, self.height+1, self.max_tree_height, self.criterion, self.extreme_random)
+        self.left_child = Node(X_lt, y_lt, self.height+1, self.max_tree_height, self.criterion, self.extreme_random, self.min_samples_leaf)
+        self.right_child = Node(X_ge, y_ge, self.height+1, self.max_tree_height, self.criterion, self.extreme_random, self.min_samples_leaf)
 
         if not self.left_child.is_leaf:
             self.left_child.fit(features_to_skip=features_to_skip)
@@ -312,6 +343,17 @@ class Node:
                 return self.left_child.predict_sample(X_sample)
             else:
                 return self.node_value
+
+
+    def total_time_taken(self):
+        time_taken = self.time_taken_for_split
+        if self.is_leaf:
+            return time_taken
+        if self.right_child is not None:
+            time_taken += self.right_child.total_time_taken()
+        if self.left_child is not None:
+            time_taken += self.left_child.total_time_taken()
+        return time_taken
 
     
     def export_graphviz_node(self, 
@@ -391,6 +433,7 @@ class DecisionTree:
     def __init__(self, 
         max_depth: int=20, 
         criterion: str='gini', 
+        min_samples_leaf: int=5,
         extreme_random: bool=False,
         features_to_skip: list=[]
         ):
@@ -398,6 +441,7 @@ class DecisionTree:
         self.criterion = criterion
         self.extreme_random = extreme_random
         self.features_to_skip = features_to_skip
+        self.min_samples_leaf = min_samples_leaf
 
 
     def fit(self, X: np.array, y: np.array):
@@ -407,7 +451,7 @@ class DecisionTree:
 
         self.num_classes = len(Counter(y))
 
-        self.root_node = Node(X, y, 1, self.max_depth, self.criterion, self.extreme_random)
+        self.root_node = Node(X, y, 1, self.max_depth, self.criterion, self.extreme_random, self.min_samples_leaf)
         self.root_node.fit(features_to_skip=self.features_to_skip)
 
         return self
@@ -416,6 +460,10 @@ class DecisionTree:
     def predict(self, X):
         y_pred = np.array([self.root_node.predict_sample(X_sample) for X_sample in X])
         return y_pred
+
+
+    def total_time_taken(self):
+        return self.root_node.total_time_taken()
 
 
     def export_graphviz(self, feature_names, class_names=None, regression=False):       
