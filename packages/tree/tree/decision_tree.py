@@ -54,7 +54,7 @@ def random_array(start, end, num_elements):
     return arr
 
 
-def feature_split_interval(X_feature, interval_granularity=0.5, default_max_len_intervals=5, extreme_random=False):
+def feature_split_interval(X_feature, interval_granularity=0.5, default_max_len_intervals=3, extreme_random=False):
     """
     Get the intervals for a particular feature to find the gini impurity values for the split.
     """
@@ -80,6 +80,10 @@ def feature_split_interval(X_feature, interval_granularity=0.5, default_max_len_
     elif unique_values.shape[0] == 2:
         # print(np.array([unique_values.mean()]))
         return np.array([unique_values.mean()])
+    elif unique_values.shape[0] == 3:
+        # print(np.array([unique_values.mean()]))
+        return np.array([unique_values[1]])
+
 
     # return X_feature_sorted
 
@@ -134,6 +138,9 @@ def optimal_feature_split(X_feature, y, criterion='gini', extreme_random=False):
 
         w1 = len(lt_split)/num_samples
         w2 = len(ge_split)/num_samples
+
+        if ge_split.shape[0] == 0 or lt_split.shape[0] == 0:
+            continue
 
         # w1 = 0.35
         # w2 = 0.65
@@ -242,6 +249,8 @@ class Node:
         elif criterion == 'entropy': 
             self.criterion_value = calculate_entropy(y)
         elif criterion == 'variance': 
+            if y.shape[0]==0:
+                print(1)
             self.criterion_value = calculate_variance(y)
         
         self.num_samples, self.num_features = X.shape
